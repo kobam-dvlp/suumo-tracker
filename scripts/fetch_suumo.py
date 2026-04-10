@@ -135,6 +135,9 @@ def main():
             lines.append(f"{i}. https://suumo.jp/chintai/{lid}/")
         slack_notify("\n".join(lines))
         print("Slack通知完了")
+    else:
+        slack_notify(f"✅ 東船橋駅周辺: 新着なし（条件一致 {len(current_ids)}件は既存）")
+        print("新着なし通知完了")
 
     github_put_file(current_ids, sha)
 
