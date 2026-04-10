@@ -1,4 +1,4 @@
-name: SUUMO物件監視
+  name: SUUMO物件監視
 
   on:
     schedule:
@@ -31,4 +31,3 @@ name: SUUMO物件監視
             git add data/seen_ids.json
             git diff --staged --quiet || git commit -m "chore: update seen listings [skip ci]"
             git push
-            
