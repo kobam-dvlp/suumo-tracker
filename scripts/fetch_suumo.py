@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 
 SLACK_WEBHOOK   = os.environ["SLACK_WEBHOOK_URL"]
-GITHUB_TOKEN    = os.environ["GITHUB_TOKEN"]
+GH_PAT    = os.environ["GH_PAT"]
 GITHUB_REPO     = "kobam-dvlp/suumo-tracker"
 SEEN_IDS_PATH   = "data/seen_ids.json"
 MAX_PAGES       = 5
@@ -43,7 +43,7 @@ def slack_notify(text):
 
 def github_get_file():
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{SEEN_IDS_PATH}"
-    req = urllib.request.Request(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
+    req = urllib.request.Request(url, headers={"Authorization": f"token {GH_PAT}"})
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             d = json.load(res)
@@ -63,7 +63,7 @@ def github_put_file(ids, sha):
         payload["sha"] = sha
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="PUT",
-                                 headers={"Authorization": f"token {GITHUB_TOKEN}",
+                                 headers={"Authorization": f"token {GH_PAT}",
                                           "Content-Type": "application/json"})
     try:
         urllib.request.urlopen(req, timeout=15)
