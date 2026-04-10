@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 SLACK_WEBHOOK = os.environ["SLACK_WEBHOOK_URL"]
 SEEN_IDS_PATH = "data/seen_ids.json"
+MAX_PAGES = 10
 
 SUUMO_URL = (
     "https://suumo.jp/jj/chintai/ichiran/FR301FC001/"
@@ -31,13 +32,15 @@ def slack_notify(text):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    urllib.request.urlopen(req, timeout=10)
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"Slack notify error: {e}", file=sys.stderr)
 
 
 def fetch_suumo():
     all_ids = []
-    page = 1
-    while True:
+    for page in range(1, MAX_PAGES + 1):
         url = SUUMO_URL + f"&page={page}"
         req = urllib.request.Request(url, headers=HEADERS)
         try:
@@ -49,12 +52,18 @@ def fetch_suumo():
 
         ids = list(set(re.findall(r"/chintai/(jnc_[^/\"]+)/", html)))
         if not ids:
+            print(f"Page {page}: no listings found, stopping")
             break
 
+        print(f"Page {page}: {len(ids)} listings")
         all_ids.extend(ids)
-        if f"page={page + 1}" not in html and "次へ" not in html:
+
+        # 次ページリンクの存在確認（より厳密なパターン）
+        has_next = bool(re.search(rf'page={page + 1}[^0-9]', html))
+        if not has_next:
+            print(f"Page {page}: no next page, stopping")
             break
-        page += 1
+
         time.sleep(2)
 
     return list(set(all_ids))
@@ -81,10 +90,10 @@ def save_seen_ids(ids):
 def main():
     print("SUUMOから物件を取得中...")
     current_ids = fetch_suumo()
-    print(f"取得件数: {len(current_ids)}")
+    print(f"合計取得件数: {len(current_ids)}")
 
     if not current_ids:
-        slack_notify("⚠ SUUMO取得失敗: 物件数0件（ブロックされた可能性あり）")
+        slack_notify("⚠ SUUMO取得失敗: 物件数0件（IPブロックの可能性あり）")
         sys.exit(1)
 
     seen_ids = load_seen_ids()
@@ -99,6 +108,8 @@ def main():
             lines.append(f"{i}. https://suumo.jp/chintai/{lid}/")
         slack_notify("\n".join(lines))
         print("Slack通知送信完了")
+    else:
+        print("新着なし")
 
     save_seen_ids(current_ids)
     print("seen_ids.json 更新完了")
