@@ -14,5 +14,5 @@ jobs:
       - name: SUUMOスクリプト実行
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
+          GH_PAT: ${{ secrets.GITHUB_PAT }}
         run: python scripts/fetch_suumo.py
