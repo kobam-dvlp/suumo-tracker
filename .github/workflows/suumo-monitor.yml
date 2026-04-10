@@ -6,23 +6,13 @@ name: SUUMO物件監視
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Python セットアップ
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: SUUMOスクリプト実行
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT }}
         run: python scripts/fetch_suumo.py
-      - name: seen_ids.json をコミット
-        run: |
-          git config user.email "suumo-tracker@bot"
-          git config user.name "SUUMO Tracker Bot"
-          git pull --rebase origin main
-          git add data/seen_ids.json
-          git diff --staged --quiet || git commit -m "chore: update seen listings [skip ci]"
-          git push
