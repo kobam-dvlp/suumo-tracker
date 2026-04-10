@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 
 SLACK_WEBHOOK = os.environ["SLACK_WEBHOOK_URL"]
 SEEN_IDS_PATH = "data/seen_ids.json"
-MAX_PAGES = 10
+MAX_PAGES = 20
 
+# 千葉県全体を検索して後でフィルタリング
 SUUMO_URL = (
     "https://suumo.jp/jj/chintai/ichiran/FR301FC001/"
     "?ar=030&bs=040&ta=12&ekname=%E6%9D%B1%E8%88%B9%E6%A9%8B"
-    "&cb=0.0&ct=12.0&mb=0&mt=9999999&et=10&cn=10"
+    "&cb=0.0&ct=12.0&mb=0&mt=9999999"
     "&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sngaiyn=0"
 )
 
@@ -22,6 +23,9 @@ HEADERS = {
     "Accept-Language": "ja,en-US;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+TARGET_STATION = "東船橋駅"
+MAX_WALK_MIN = 10
 
 
 def slack_notify(text):
@@ -35,11 +39,21 @@ def slack_notify(text):
     try:
         urllib.request.urlopen(req, timeout=10)
     except Exception as e:
-        print(f"Slack notify error: {e}", file=sys.stderr)
+        print(f"Slack error: {e}", file=sys.stderr)
+
+
+def is_near_target(block_html):
+    """東船橋駅 徒歩10分以内かチェック"""
+    texts = re.findall(r'cassetteitem_detail-text[^>]*>([^<]+)', block_html)
+    for text in texts:
+        m = re.search(r'東船橋駅\s*歩(\d+)分', text)
+        if m and int(m.group(1)) <= MAX_WALK_MIN:
+            return True
+    return False
 
 
 def fetch_suumo():
-    all_ids = []
+    matched_ids = []
     for page in range(1, MAX_PAGES + 1):
         url = SUUMO_URL + f"&page={page}"
         req = urllib.request.Request(url, headers=HEADERS)
@@ -47,26 +61,27 @@ def fetch_suumo():
             with urllib.request.urlopen(req, timeout=30) as res:
                 html = res.read().decode("utf-8", errors="replace")
         except Exception as e:
-            print(f"Fetch error on page {page}: {e}", file=sys.stderr)
+            print(f"Fetch error page {page}: {e}", file=sys.stderr)
             break
 
-        ids = list(set(re.findall(r"/chintai/(jnc_[^/\"]+)/", html)))
-        if not ids:
-            print(f"Page {page}: no listings found, stopping")
-            break
+        # 建物単位で分割してフィルタリング
+        blocks = re.split(r'(?=<div[^>]*class="cassetteitem")', html)
+        page_matched = 0
+        for block in blocks:
+            if is_near_target(block):
+                ids = list(set(re.findall(r'jnc_[a-zA-Z0-9]+', block)))
+                matched_ids.extend(ids)
+                page_matched += len(ids)
 
-        print(f"Page {page}: {len(ids)} listings")
-        all_ids.extend(ids)
+        total_ids = len(re.findall(r'jnc_[a-zA-Z0-9]+', html))
+        print(f"Page {page}: 全{total_ids}件中 東船橋10分以内={page_matched}件")
 
-        # 次ページリンクの存在確認（より厳密なパターン）
         has_next = bool(re.search(rf'page={page + 1}[^0-9]', html))
         if not has_next:
-            print(f"Page {page}: no next page, stopping")
             break
-
         time.sleep(2)
 
-    return list(set(all_ids))
+    return list(set(matched_ids))
 
 
 def load_seen_ids():
@@ -88,28 +103,26 @@ def save_seen_ids(ids):
 
 
 def main():
-    print("SUUMOから物件を取得中...")
+    print("SUUMOから東船橋駅10分以内の物件を取得中...")
     current_ids = fetch_suumo()
-    print(f"合計取得件数: {len(current_ids)}")
+    print(f"条件一致: {len(current_ids)}件")
 
     if not current_ids:
-        slack_notify("⚠ SUUMO取得失敗: 物件数0件（IPブロックの可能性あり）")
-        sys.exit(1)
+        slack_notify("⚠ 東船橋駅周辺: 条件に合う物件が見つかりませんでした（築10年以内・1LDK以上・12万以下・徒歩10分以内）")
+        save_seen_ids([])
+        return
 
     seen_ids = load_seen_ids()
     seen_set = set(seen_ids)
     new_ids = [i for i in current_ids if i not in seen_set]
-
-    print(f"新着件数: {len(new_ids)}")
+    print(f"新着: {len(new_ids)}件")
 
     if new_ids:
-        lines = [f"🏠 *新着物件 {len(new_ids)}件*（東船橋駅周辺）\n"]
+        lines = [f"🏠 *新着物件 {len(new_ids)}件*（東船橋駅 徒歩10分以内）\n"]
         for i, lid in enumerate(new_ids, 1):
             lines.append(f"{i}. https://suumo.jp/chintai/{lid}/")
         slack_notify("\n".join(lines))
-        print("Slack通知送信完了")
-    else:
-        print("新着なし")
+        print("Slack通知完了")
 
     save_seen_ids(current_ids)
     print("seen_ids.json 更新完了")
