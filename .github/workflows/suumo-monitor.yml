@@ -23,5 +23,4 @@ jobs:
           git config user.email "suumo-tracker@bot"
           git config user.name "SUUMO Tracker Bot"
           git add data/seen_ids.json
-          git diff --staged --quiet || git commit -m "chore: update seen listings [skip ci]"
-          git push
+          git diff --staged --quiet || (git commit -m "chore: update seen listings [skip ci]" && git pull --rebase && git push)
