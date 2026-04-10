@@ -15,11 +15,17 @@ SEEN_IDS_PATH   = "data/seen_ids.json"
 MAX_PAGES       = 20
 TARGET_STATION  = "東船橋駅"
 MAX_WALK_MIN    = 10
+MAX_CHIKU_YEARS = 10
+MAX_RENT_MAN    = 12.0
+
+# 1LDK以上: 1LDK, 1SLDK, 2K, 2DK, 2LDK, 2SLDK, 3K, 3DK, 3LDK ...
+ACCEPTABLE_MADORI = re.compile(r'\b(?:1S?LDK|[2-9]S?(?:LDK|DK|K))\b')
 
 SUUMO_URL = (
     "https://suumo.jp/jj/chintai/ichiran/FR301FC001/"
     "?ar=030&bs=040&ta=12&ekname=%E6%9D%B1%E8%88%B9%E6%A9%8B"
     "&cb=0.0&ct=12.0&mb=0&mt=9999999"
+    "&et=10&cn=10"
     "&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sngaiyn=0"
 )
 HEADERS = {
@@ -78,6 +84,23 @@ def is_near_target(block_html):
     return False
 
 
+def matches_criteria(block_html):
+    """築年数・間取り・家賃のPythonレベルフィルタ"""
+    # 築年数チェック
+    chiku_m = re.search(r'築(\d+)年', block_html)
+    if chiku_m and int(chiku_m.group(1)) > MAX_CHIKU_YEARS:
+        return False
+
+    # 1LDK以上の間取りがあるか
+    has_madori = bool(ACCEPTABLE_MADORI.search(block_html))
+
+    # 家賃チェック: 管理費等の小額(5万未満)を除外し、12万以下の値があるか
+    rents = [float(r) for r in re.findall(r'(\d+\.?\d*)万円', block_html)]
+    has_rent = any(5.0 <= r <= MAX_RENT_MAN for r in rents)
+
+    return has_madori and has_rent
+
+
 def fetch_suumo():
     matched_ids = []
     for page in range(1, MAX_PAGES + 1):
@@ -93,13 +116,13 @@ def fetch_suumo():
         blocks = re.split(r'(?=<div[^>]*class="cassetteitem")', html)
         page_matched = 0
         for block in blocks:
-            if is_near_target(block):
+            if is_near_target(block) and matches_criteria(block):
                 ids = list(set(re.findall(r'jnc_[a-zA-Z0-9]+', block)))
                 matched_ids.extend(ids)
                 page_matched += len(ids)
 
         total = len(re.findall(r'jnc_[a-zA-Z0-9]+', html))
-        print(f"Page {page}: {total}件中 東船橋10分以内={page_matched}件")
+        print(f"Page {page}: {total}件中 条件一致={page_matched}件")
 
         if not re.search(rf'page={page + 1}[^0-9]', html):
             break
@@ -111,11 +134,12 @@ def fetch_suumo():
 def main():
     print("取得開始...")
     current_ids = fetch_suumo()
-    print(f"条件一致: {len(current_ids)}件")
+    print(f"全条件一致: {len(current_ids)}件")
 
     if not current_ids:
         slack_notify("⚠ 東船橋駅周辺: 条件に合う物件なし（築10年以内・1LDK以上・12万以下・徒歩10分以内）")
-        github_put_file([], (github_get_file()[1]))
+        _, sha = github_get_file()
+        github_put_file([], sha)
         return
 
     seen_ids, sha = github_get_file()
@@ -124,7 +148,7 @@ def main():
     print(f"新着: {len(new_ids)}件")
 
     if new_ids:
-        lines = [f"🏠 *新着物件 {len(new_ids)}件*（東船橋駅 徒歩10分以内）\n"]
+        lines = [f"🏠 *新着物件 {len(new_ids)}件*（東船橋駅 徒歩10分以内・築10年以内・1LDK以上・12万以下）\n"]
         for i, lid in enumerate(new_ids, 1):
             lines.append(f"{i}. https://suumo.jp/chintai/{lid}/")
         slack_notify("\n".join(lines))
