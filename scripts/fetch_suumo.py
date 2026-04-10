@@ -1,5 +1,4 @@
 import urllib.request
-import urllib.parse
 import re
 import json
 import os
@@ -12,26 +11,24 @@ SLACK_WEBHOOK   = os.environ["SLACK_WEBHOOK_URL"]
 GITHUB_TOKEN    = os.environ["GITHUB_TOKEN"]
 GITHUB_REPO     = "kobam-dvlp/suumo-tracker"
 SEEN_IDS_PATH   = "data/seen_ids.json"
-MAX_PAGES       = 20
-TARGET_STATION  = "東船橋駅"
-MAX_WALK_MIN    = 10
-MAX_CHIKU_YEARS = 10
-MAX_RENT_MAN    = 12.0
+MAX_PAGES       = 5
 
-# 1LDK以上: 1LDK, 1SLDK, 2K, 2DK, 2LDK, 2SLDK, 3K, 3DK, 3LDK ...
-ACCEPTABLE_MADORI = re.compile(r'\b(?:1S?LDK|[2-9]S?(?:LDK|DK|K))\b')
-
+# 東船橋駅(ek_32350)専用URL: 徒歩10分・家賃12万・築10年・1LDK以上をサーバー側で絞り込み
+# md=04:1LDK, 05:2K, 06:2DK, 07:2LDK, 08:3K, 09:3DK, 10:3LDK, 11:4K以上
 SUUMO_URL = (
-    "https://suumo.jp/jj/chintai/ichiran/FR301FC001/"
-    "?ar=030&bs=040&ta=12&ekname=%E6%9D%B1%E8%88%B9%E6%A9%8B"
-    "&cb=0.0&ct=12.0&mb=0&mt=9999999"
-    "&et=10&cn=10"
-    "&shkr1=03&shkr2=03&shkr3=03&shkr4=03&sngaiyn=0"
+    "https://suumo.jp/chintai/chiba/ek_32350/"
+    "?et=10&ct=12.0&cn=10"
+    "&md=04&md=05&md=06&md=07&md=08&md=09&md=10&md=11"
 )
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "ja,en-US;q=0.9",
 }
+
+# Pythonレベルの安全フィルタ（サーバー側が効かない場合の保険）
+ACCEPTABLE_MADORI = re.compile(r'\b(?:1S?LDK|[2-9]S?(?:LDK|DK|K))\b')
+MAX_CHIKU_YEARS = 10
+MAX_RENT_MAN    = 12.0
 
 
 def slack_notify(text):
@@ -75,29 +72,14 @@ def github_put_file(ids, sha):
         print(f"GitHub API error: {e}", file=sys.stderr)
 
 
-def is_near_target(block_html):
-    texts = re.findall(r'cassetteitem_detail-text[^>]*>([^<]+)', block_html)
-    for text in texts:
-        m = re.search(r'東船橋駅\s*歩(\d+)分', text)
-        if m and int(m.group(1)) <= MAX_WALK_MIN:
-            return True
-    return False
-
-
 def matches_criteria(block_html):
-    """築年数・間取り・家賃のPythonレベルフィルタ"""
-    # 築年数チェック
+    """サーバー側フィルタの保険: 築年数・間取り・家賃をPythonで再確認"""
     chiku_m = re.search(r'築(\d+)年', block_html)
     if chiku_m and int(chiku_m.group(1)) > MAX_CHIKU_YEARS:
         return False
-
-    # 1LDK以上の間取りがあるか
     has_madori = bool(ACCEPTABLE_MADORI.search(block_html))
-
-    # 家賃チェック: 管理費等の小額(5万未満)を除外し、12万以下の値があるか
     rents = [float(r) for r in re.findall(r'(\d+\.?\d*)万円', block_html)]
     has_rent = any(5.0 <= r <= MAX_RENT_MAN for r in rents)
-
     return has_madori and has_rent
 
 
@@ -114,17 +96,17 @@ def fetch_suumo():
             break
 
         blocks = re.split(r'(?=<div[^>]*class="cassetteitem")', html)
-        page_matched = 0
+        page_ids = []
         for block in blocks:
-            if is_near_target(block) and matches_criteria(block):
+            if matches_criteria(block):
                 ids = list(set(re.findall(r'jnc_[a-zA-Z0-9]+', block)))
-                matched_ids.extend(ids)
-                page_matched += len(ids)
+                page_ids.extend(ids)
 
-        total = len(re.findall(r'jnc_[a-zA-Z0-9]+', html))
-        print(f"Page {page}: {total}件中 条件一致={page_matched}件")
+        matched_ids.extend(page_ids)
+        print(f"Page {page}: {len(page_ids)}件一致 (累計{len(set(matched_ids))}件)")
 
-        if not re.search(rf'page={page + 1}[^0-9]', html):
+        # 次ページなければ終了
+        if not re.search(rf'page={page + 1}', html):
             break
         time.sleep(2)
 
